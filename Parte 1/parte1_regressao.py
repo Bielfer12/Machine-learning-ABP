@@ -1,0 +1,155 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+pasta_do_script = os.path.dirname(os.path.abspath(__file__))
+caminho_csv = os.path.join(pasta_do_script, "..", "Docs", "DataSet", "group_9_winequality.csv")
+
+wine = pd.read_csv(caminho_csv)
+print("Linhas e colunas do dataset original:", wine.shape)
+
+antes = len(wine)
+wine = wine.dropna(subset=["type"])
+print("Removidas por type ausente:", antes - len(wine))
+
+wine.loc[wine["type"].str.startswith("white"), "type"] = "white"
+
+antes = len(wine)
+wine = wine[wine["quality"] <= 10]
+print("Removidas por nota inválida:", antes - len(wine))
+alcohol_num = pd.to_numeric(wine["alcohol"], errors="coerce")
+erros = alcohol_num.isna()
+
+
+alcohol_texto = wine.loc[erros, "alcohol"].str.replace(".", "", regex=False).astype(float)
+
+wine["alcohol"] = alcohol_num
+wine.loc[erros, "alcohol"] = alcohol_texto
+for i in range(40):
+    wine.loc[wine["alcohol"] > 20, "alcohol"] = wine["alcohol"] / 10
+
+for i in range(4):
+    wine.loc[wine["density"] > 2, "density"] = wine["density"] / 10
+
+antes = len(wine)
+wine = wine[(wine["density"] >= 0.98) & (wine["density"] <= 1.04)]
+print("Removidas por densidade impossível:", antes - len(wine))
+
+wine.loc[wine["chlorides"] > 1, "chlorides"] = wine["chlorides"] / 1000
+wine.loc[wine["volatile acidity"] > 5, "volatile acidity"] = wine["volatile acidity"] / 1000
+
+faixas = {
+    "fixed acidity": (3.5, 16),
+    "volatile acidity": (0.05, 1.6),
+    "citric acid": (0, 1.7),
+    "residual sugar": (0.5, 66),
+    "chlorides": (0.005, 0.62),
+    "free sulfur dioxide": (1, 290),
+    "total sulfur dioxide": (5, 440),
+    "pH": (2.7, 4.1),
+    "sulphates": (0.2, 2.0),
+}
+
+antes = len(wine)
+for coluna, (minimo, maximo) in faixas.items():
+    fora = (wine[coluna] < minimo) | (wine[coluna] > maximo)
+    wine = wine[~fora]
+print("Removidas por valor fora da faixa:", antes - len(wine))
+
+antes = len(wine)
+wine = wine.drop_duplicates()
+print("Removidas por duplicadas:", antes - len(wine))
+print("Linhas restantes após a limpeza:", len(wine))
+
+wine.hist(bins=30, figsize=(15, 12))
+plt.show()
+
+corr_matrix = wine.corr(numeric_only=True)
+
+print("\nCorrelação com a nota (quality):")
+print(corr_matrix["quality"].sort_values(ascending=False))
+
+plt.figure(figsize=(12, 9))
+sns.heatmap(corr_matrix, cmap="crest", annot=True, fmt=".1f")
+plt.show()
+
+wine.plot(kind="scatter", x="alcohol", y="quality", alpha=0.2, grid=True)
+plt.show()
+
+ausentes = wine.isnull().sum()
+print("\nValores ausentes antes de tratar:")
+print(ausentes[ausentes > 0])
+
+from sklearn.impute import SimpleImputer
+
+wine_num = wine.select_dtypes(include=[np.number])
+
+imputer = SimpleImputer(strategy="median")
+imputer.fit(wine_num)
+X = imputer.transform(wine_num)
+
+wine_num = pd.DataFrame(X, columns=wine_num.columns, index=wine_num.index)
+
+print("\nOutliers por coluna (IQR):")
+for coluna in wine_num.columns.drop("quality"):
+    q1 = wine_num[coluna].quantile(0.25)
+    q3 = wine_num[coluna].quantile(0.75)
+    iqr = q3 - q1
+    outliers = (wine_num[coluna] < q1 - 1.5 * iqr) | (wine_num[coluna] > q3 + 1.5 * iqr)
+    print(coluna, ":", outliers.sum())
+
+from sklearn.preprocessing import OrdinalEncoder
+
+ordinal_encoder = OrdinalEncoder()
+type_encoded = ordinal_encoder.fit_transform(wine[["type"]])
+
+wine_num["type"] = type_encoded
+
+X = wine_num.drop(columns="quality")
+y = wine_num["quality"]
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print("\nTreino:", len(X_train), "linhas | Teste:", len(X_test), "linhas")
+
+from sklearn.preprocessing import StandardScaler
+
+std_scaler = StandardScaler()
+X_train_scaled = std_scaler.fit_transform(X_train)
+X_test_scaled = std_scaler.transform(X_test)
+
+from sklearn.linear_model import LinearRegression
+
+lin_reg = LinearRegression()
+
+lin_reg.fit(X_train_scaled, y_train)
+
+y_pred_lin = lin_reg.predict(X_test_scaled)
+
+from sklearn.svm import SVR
+
+svr = SVR(kernel="rbf")
+
+svr.fit(X_train_scaled, y_train)
+
+y_pred_svr = svr.predict(X_test_scaled)
+
+from sklearn.ensemble import RandomForestRegressor
+
+rf = RandomForestRegressor(random_state=42)
+
+rf.fit(X_train_scaled, y_train)
+
+y_pred_rf = rf.predict(X_test_scaled)
+
+print("\nPrimeiras 5 predições (nota real x modelos):")
+resultado = pd.DataFrame({
+    "real": y_test.values[:5],
+    "linear": y_pred_lin[:5].round(2),
+    "svr": y_pred_svr[:5].round(2),
+    "random_forest": y_pred_rf[:5].round(2),
+})
+print(resultado)

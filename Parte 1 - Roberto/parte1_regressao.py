@@ -258,3 +258,121 @@ resultado = pd.DataFrame({
     "random_forest": y_pred_rf[:5].round(2),
 })
 print(resultado)
+
+# --- 4. Etapa 4 — Avaliação ---
+
+# --- 4.1 Métricas no conjunto de teste ---
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.dummy import DummyRegressor
+
+def avaliar(nome, y_real, y_previsto):
+    # Calcula as três métricas de um modelo
+    return {
+        "modelo": nome,
+        "RMSE": np.sqrt(mean_squared_error(y_real, y_previsto)),
+        "MAE": mean_absolute_error(y_real, y_previsto),
+        "R²": r2_score(y_real, y_previsto),
+    }
+
+# Baseline: prevê sempre a média das notas do treino
+dummy = DummyRegressor(strategy="mean")
+dummy.fit(X_train_scaled, y_train)
+y_pred_dummy = dummy.predict(X_test_scaled)
+
+previsoes = {
+    "Baseline (média)": y_pred_dummy,
+    "Regressão Linear": y_pred_lin,
+    "SVR": y_pred_svr,
+    "Random Forest": y_pred_rf,
+}
+
+resultados_teste = pd.DataFrame(
+    [avaliar(nome, y_test, pred) for nome, pred in previsoes.items()]
+).set_index("modelo")
+print("Métricas no conjunto de teste:")
+print(resultados_teste.round(3))
+
+melhor_modelo = resultados_teste.drop("Baseline (média)")["RMSE"].idxmin()
+print(f"\nMelhor modelo no teste (menor RMSE): {melhor_modelo}")
+
+# --- 4.2 Treino x teste: o modelo decorou os dados? ---
+modelos_treinados = {"Regressão Linear": lin_reg, "SVR": svr, "Random Forest": rf}
+
+linhas = []
+for nome, modelo in modelos_treinados.items():
+    r2_treino = r2_score(y_train, modelo.predict(X_train_scaled))
+    r2_teste = resultados_teste.loc[nome, "R²"]
+    linhas.append({"modelo": nome, "R² treino": r2_treino, "R² teste": r2_teste,
+                   "diferença": r2_treino - r2_teste})
+print("R² no treino x R² no teste:")
+print(pd.DataFrame(linhas).set_index("modelo").round(3))
+
+# --- 4.3 Validação cruzada ---
+from sklearn.model_selection import KFold, cross_validate
+from sklearn.pipeline import Pipeline
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+modelos_cv = {
+    "Regressão Linear": Pipeline([("scaler", StandardScaler()), ("modelo", LinearRegression())]),
+    "SVR": Pipeline([("scaler", StandardScaler()), ("modelo", SVR(kernel="rbf"))]),
+    "Random Forest": Pipeline([("scaler", StandardScaler()),
+                               ("modelo", RandomForestRegressor(random_state=42, n_jobs=-1))]),
+}
+
+linhas = []
+for nome, modelo in modelos_cv.items():
+    cv = cross_validate(modelo, X_train, y_train, cv=kf,
+                        scoring={"rmse": "neg_root_mean_squared_error",
+                                 "mae": "neg_mean_absolute_error",
+                                 "r2": "r2"})
+    linhas.append({
+        "modelo": nome,
+        "RMSE (média)": -cv["test_rmse"].mean(),
+        "RMSE (desvio)": cv["test_rmse"].std(),
+        "MAE (média)": -cv["test_mae"].mean(),
+        "R² (média)": cv["test_r2"].mean(),
+        "R² (desvio)": cv["test_r2"].std(),
+    })
+resultados_cv = pd.DataFrame(linhas).set_index("modelo")
+print("Validação cruzada (5 partes) no conjunto de treino:")
+print(resultados_cv.round(3))
+
+# --- 4.4 Real x previsto e resíduos ---
+modelos_plot = {nome: previsoes[nome] for nome in ["Regressão Linear", "SVR", "Random Forest"]}
+
+fig, eixos = plt.subplots(2, 3, figsize=(16, 9))
+for coluna, (nome, pred) in enumerate(modelos_plot.items()):
+    # Linha de cima: real x previsto
+    ax = eixos[0, coluna]
+    ax.scatter(y_test, pred, alpha=0.25, s=12)
+    ax.plot([3, 9], [3, 9], "--", color="red")
+    ax.set_title(f"{nome}: real x previsto")
+    ax.set_xlabel("nota real")
+    ax.set_ylabel("nota prevista")
+
+    # Linha de baixo: histograma dos resíduos
+    ax = eixos[1, coluna]
+    residuos = y_test.values - pred
+    ax.hist(residuos, bins=30)
+    ax.axvline(0, color="red", linestyle="--")
+    ax.set_title(f"{nome}: resíduos (média = {residuos.mean():.2f})")
+    ax.set_xlabel("nota real - nota prevista")
+plt.tight_layout()
+plt.show()
+
+# --- 4.5 Onde o melhor modelo erra mais? Erro por nota ---
+pred_melhor = previsoes[melhor_modelo]
+erro_por_nota = (
+    pd.DataFrame({"nota_real": y_test.values.astype(int),
+                  "erro_absoluto": np.abs(y_test.values - pred_melhor)})
+    .groupby("nota_real")["erro_absoluto"]
+    .agg(quantidade="count", erro_medio="mean")
+)
+print(f"Erro absoluto médio por nota real ({melhor_modelo}):")
+print(erro_por_nota.round(3))
+
+erro_por_nota["erro_medio"].plot(kind="bar", figsize=(7, 4))
+plt.ylabel("erro absoluto médio (pontos)")
+plt.title(f"Erro por nota real - {melhor_modelo}")
+plt.show()

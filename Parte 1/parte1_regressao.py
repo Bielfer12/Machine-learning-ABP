@@ -78,6 +78,44 @@ plt.show()
 wine.plot(kind="scatter", x="alcohol", y="quality", alpha=0.2, grid=True)
 plt.show()
 
+
+# --- 1.6 Scatter plots das 4 variáveis mais correlacionadas com a nota ---
+# Escolhemos as 4 variáveis com maior correlação (em valor absoluto) com a nota
+top4 = corr_matrix["quality"].drop("quality").abs().sort_values(ascending=False).head(4).index
+
+fig, eixos = plt.subplots(2, 2, figsize=(12, 8))
+for ax, coluna in zip(eixos.ravel(), top4):
+    sns.regplot(data=wine, x=coluna, y="quality", ax=ax,
+                scatter_kws={"alpha": 0.15, "s": 10}, line_kws={"color": "red"})
+    ax.set_title(f"{coluna} x quality (correlação = {corr_matrix.loc[coluna, 'quality']:.2f})")
+plt.tight_layout()
+plt.show()
+
+# --- 1.7 Distribuição da nota por tipo de vinho ---
+# Quantos vinhos existem em cada nota, separando por tipo
+print("Quantidade de vinhos por nota e por tipo:")
+print(pd.crosstab(wine["quality"].astype(int), wine["type"]))
+
+plt.figure(figsize=(8, 4))
+sns.countplot(x=wine["quality"].astype(int), hue=wine["type"])
+plt.xlabel("quality")
+plt.title("Distribuição da nota de qualidade por tipo de vinho")
+plt.show()
+
+print("\nNota média por tipo:")
+print(wine.groupby("type")["quality"].agg(["count", "mean", "std"]).round(2))
+
+# --- 1.8 A correlação com a nota muda entre tintos e brancos? ---
+# Correlação de cada variável com a nota, calculada separadamente para cada tipo
+corr_por_tipo = pd.DataFrame({
+    tipo: wine[wine["type"] == tipo].corr(numeric_only=True)["quality"]
+    for tipo in wine["type"].unique()
+}).drop("quality")
+corr_por_tipo["geral"] = corr_matrix["quality"].drop("quality")
+
+print("Correlação com a nota (quality) por tipo de vinho:")
+print(corr_por_tipo.sort_values("geral", ascending=False).round(2))
+
 ausentes = wine.isnull().sum()
 print("\nValores ausentes antes de tratar:")
 print(ausentes[ausentes > 0])

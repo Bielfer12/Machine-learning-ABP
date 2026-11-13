@@ -376,3 +376,88 @@ erro_por_nota["erro_medio"].plot(kind="bar", figsize=(7, 4))
 plt.ylabel("erro absoluto médio (pontos)")
 plt.title(f"Erro por nota real - {melhor_modelo}")
 plt.show()
+
+# --- 5. Etapa 5 — Ajuste de hiperparâmetros ---
+
+# --- 5.1 Busca nos três modelos ---
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.linear_model import Ridge
+from scipy.stats import randint
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+# --- Ridge: GridSearchCV (poucos valores, testamos todos) ---
+pipe_ridge = Pipeline([("scaler", StandardScaler()), ("modelo", Ridge())])
+grade_ridge = {"modelo__alpha": [0.01, 0.1, 1, 10, 100, 1000]}
+busca_ridge = GridSearchCV(pipe_ridge, grade_ridge, cv=kf,
+                           scoring="neg_root_mean_squared_error", n_jobs=-1)
+busca_ridge.fit(X_train, y_train)
+
+# --- SVR: GridSearchCV (5 x 3 x 2 = 30 combinações) ---
+pipe_svr = Pipeline([("scaler", StandardScaler()), ("modelo", SVR(kernel="rbf"))])
+grade_svr = {
+    "modelo__C": [0.5, 1, 2, 5, 10],
+    "modelo__gamma": [0.02, 0.05, "scale"],
+    "modelo__epsilon": [0.1, 0.2],
+}
+busca_svr = GridSearchCV(pipe_svr, grade_svr, cv=kf,
+                         scoring="neg_root_mean_squared_error", n_jobs=-1)
+busca_svr.fit(X_train, y_train)
+
+# --- Random Forest: RandomizedSearchCV (20 combinações sorteadas) ---
+pipe_rf = Pipeline([("scaler", StandardScaler()),
+                    ("modelo", RandomForestRegressor(random_state=42))])
+espaco_rf = {
+    "modelo__n_estimators": randint(100, 500),
+    "modelo__max_depth": [None, 10, 15, 20, 30],
+    "modelo__min_samples_leaf": randint(1, 6),
+    "modelo__max_features": ["sqrt", "log2", 0.5, 1.0],
+}
+busca_rf = RandomizedSearchCV(pipe_rf, espaco_rf, n_iter=20, cv=kf,
+                              scoring="neg_root_mean_squared_error",
+                              n_jobs=-1, random_state=42)
+busca_rf.fit(X_train, y_train)
+
+# Resumo: melhor RMSE na validação cruzada e melhores parâmetros
+for nome, busca in [("Ridge", busca_ridge), ("SVR", busca_svr), ("Random Forest", busca_rf)]:
+    print(f"{nome}: melhor RMSE na validação cruzada = {-busca.best_score_:.4f}")
+    print("   melhores parâmetros:", busca.best_params_)
+
+# --- 5.2 As melhores combinações do SVR ---
+cv_svr = pd.DataFrame(busca_svr.cv_results_)
+cv_svr["RMSE (média)"] = -cv_svr["mean_test_score"]
+cv_svr["RMSE (desvio)"] = cv_svr["std_test_score"]
+
+top5_svr = cv_svr.sort_values("rank_test_score").head(5)[
+    ["param_modelo__C", "param_modelo__gamma", "param_modelo__epsilon", "RMSE (média)", "RMSE (desvio)"]
+]
+print("5 melhores combinações do SVR:")
+print(top5_svr.round(4).to_string(index=False))
+
+# --- 5.3 Antes x depois no conjunto de teste ---
+modelos_tunados = {
+    "Ridge (ajustada)": busca_ridge.best_estimator_,
+    "SVR (ajustado)": busca_svr.best_estimator_,
+    "Random Forest (ajustada)": busca_rf.best_estimator_,
+}
+
+previsoes_tunadas = {nome: modelo.predict(X_test) for nome, modelo in modelos_tunados.items()}
+resultados_tunados = pd.DataFrame(
+    [avaliar(nome, y_test, pred) for nome, pred in previsoes_tunadas.items()]
+).set_index("modelo")
+
+comparacao = pd.concat([resultados_teste, resultados_tunados])
+print("Comparação final no conjunto de teste:")
+print(comparacao.round(3))
+
+# Quanto o ajuste mudou o RMSE de cada modelo
+for padrao, ajustado in [("SVR", "SVR (ajustado)"), ("Random Forest", "Random Forest (ajustada)")]:
+    antes = comparacao.loc[padrao, "RMSE"]
+    depois = comparacao.loc[ajustado, "RMSE"]
+    print(f"{padrao}: RMSE {antes:.4f} -> {depois:.4f} (variação {depois - antes:+.4f})")
+
+comparacao["RMSE"].sort_values(ascending=False).plot(kind="barh", figsize=(8, 4))
+plt.xlabel("RMSE no teste (menor é melhor)")
+plt.title("Todos os modelos: RMSE no conjunto de teste")
+plt.tight_layout()
+plt.show()

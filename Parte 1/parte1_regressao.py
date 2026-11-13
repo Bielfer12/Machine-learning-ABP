@@ -461,3 +461,95 @@ plt.xlabel("RMSE no teste (menor é melhor)")
 plt.title("Todos os modelos: RMSE no conjunto de teste")
 plt.tight_layout()
 plt.show()
+
+# --- 6. Etapa 6 — Discussão ---
+
+# --- 6.1 Coeficientes da regressão linear ---
+nomes = X.columns
+
+coeficientes = pd.DataFrame({
+    "Regressão Linear": lin_reg.coef_,
+    "Ridge (ajustada)": busca_ridge.best_estimator_.named_steps["modelo"].coef_,
+}, index=nomes).sort_values("Regressão Linear")
+
+print("Coeficientes (variáveis padronizadas):")
+print(coeficientes.round(3))
+
+coeficientes.plot(kind="barh", figsize=(9, 6))
+plt.axvline(0, color="black", linewidth=0.8)
+plt.xlabel("variação na nota para +1 desvio padrão da variável")
+plt.title("Coeficientes da regressão linear")
+plt.tight_layout()
+plt.show()
+
+# --- 6.2 Multicolinearidade (VIF) ---
+vif = {}
+for i, coluna in enumerate(nomes):
+    outras = np.delete(X_train_scaled, i, axis=1)
+    alvo = X_train_scaled[:, i]
+    r2_coluna = LinearRegression().fit(outras, alvo).score(outras, alvo)
+    vif[coluna] = 1 / (1 - r2_coluna)
+
+vif = pd.Series(vif).sort_values(ascending=False)
+print("VIF de cada variável (maior = mais redundante):")
+print(vif.round(2))
+
+# --- 6.3 Importância das variáveis (Random Forest e permutação) ---
+from sklearn.inspection import permutation_importance
+
+# Importância da Random Forest ajustada (baseada nas divisões das árvores)
+rf_ajustada = busca_rf.best_estimator_.named_steps["modelo"]
+imp_rf = pd.Series(rf_ajustada.feature_importances_, index=nomes)
+
+# Importância por permutação, no conjunto de teste, para o melhor modelo ajustado
+melhor_ajustado = resultados_tunados["RMSE"].idxmin()
+perm = permutation_importance(modelos_tunados[melhor_ajustado], X_test, y_test,
+                              n_repeats=10, random_state=42,
+                              scoring="neg_root_mean_squared_error", n_jobs=-1)
+# Valores negativos (embaralhar não piorou o modelo) são tratados como importância zero
+imp_perm = pd.Series(perm.importances_mean, index=nomes).clip(lower=0)
+
+importancias = pd.DataFrame({
+    "|coeficiente| linear": coeficientes["Regressão Linear"].abs(),
+    "Random Forest (impureza)": imp_rf,
+    f"Permutação ({melhor_ajustado})": imp_perm,
+})
+
+# Normalizamos cada coluna para somar 1, para poder comparar os três métodos
+normalizadas = importancias / importancias.sum()
+ranking = importancias.rank(ascending=False).mean(axis=1).sort_values()
+normalizadas = normalizadas.loc[ranking.index]
+
+print("Importância normalizada (cada coluna soma 1):")
+print(normalizadas.round(3))
+print("\nRanking médio (1 = mais importante):")
+print(ranking.round(1))
+
+normalizadas.iloc[::-1].plot(kind="barh", figsize=(10, 7))
+plt.xlabel("importância relativa")
+plt.title("Importância das variáveis nos três métodos")
+plt.tight_layout()
+plt.show()
+
+# --- 6.4 Resumo dos resultados ---
+melhor_geral = comparacao.drop("Baseline (média)")["RMSE"].idxmin()
+rmse_base = comparacao.loc["Baseline (média)", "RMSE"]
+rmse_melhor = comparacao.loc[melhor_geral, "RMSE"]
+mae_melhor = comparacao.loc[melhor_geral, "MAE"]
+r2_melhor = comparacao.loc[melhor_geral, "R²"]
+
+print(f"Melhor modelo no teste: {melhor_geral}")
+print(f"  RMSE = {rmse_melhor:.3f} pontos | MAE = {mae_melhor:.3f} pontos | R² = {r2_melhor:.3f}")
+print(f"  O RMSE é {100 * (1 - rmse_melhor / rmse_base):.1f}% menor que o do baseline ({rmse_base:.3f}).")
+print(f"  O modelo explica cerca de {100 * r2_melhor:.0f}% da variação da nota.")
+
+print("\nVariáveis que mais impactam a nota (ranking médio dos três métodos):")
+for posicao, variavel in enumerate(ranking.index[:5], start=1):
+    sentido = "aumentam" if coeficientes.loc[variavel, "Regressão Linear"] > 0 else "diminuem"
+    print(f"  {posicao}. {variavel}: no modelo linear, valores maiores {sentido} a nota")
+
+multicolineares = vif[vif > 5].index.tolist()
+print("\nVariáveis com VIF acima de 5 (coeficientes lineares menos confiáveis):",
+      multicolineares if multicolineares else "nenhuma")
+
+# --- 6.5 Limitações e próximos passos ---

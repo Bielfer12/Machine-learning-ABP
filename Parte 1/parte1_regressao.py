@@ -138,6 +138,73 @@ for coluna in wine_num.columns.drop("quality"):
     outliers = (wine_num[coluna] < q1 - 1.5 * iqr) | (wine_num[coluna] > q3 + 1.5 * iqr)
     print(coluna, ":", outliers.sum())
 
+
+# --- 2.2.1 Resumo e boxplots dos outliers ---
+# Tabela com a quantidade, o percentual e os limites do IQR de cada variável
+resumo = []
+for coluna in wine_num.columns.drop("quality"):
+    q1 = wine_num[coluna].quantile(0.25)
+    q3 = wine_num[coluna].quantile(0.75)
+    iqr = q3 - q1
+    marcados = (wine_num[coluna] < q1 - 1.5 * iqr) | (wine_num[coluna] > q3 + 1.5 * iqr)
+    resumo.append({
+        "variavel": coluna,
+        "outliers": int(marcados.sum()),
+        "percentual (%)": round(100 * marcados.mean(), 1),
+        "limite inferior": round(q1 - 1.5 * iqr, 3),
+        "limite superior": round(q3 + 1.5 * iqr, 3),
+    })
+tabela_outliers = pd.DataFrame(resumo).sort_values("outliers", ascending=False)
+print(tabela_outliers.to_string(index=False))
+
+# Boxplot de cada variável (cada uma na sua escala)
+colunas = wine_num.columns.drop("quality")
+fig, eixos = plt.subplots(3, 4, figsize=(16, 10))
+for ax, coluna in zip(eixos.ravel(), colunas):
+    sns.boxplot(y=wine_num[coluna], ax=ax)
+    ax.set_title(coluna)
+    ax.set_ylabel("")
+for ax in eixos.ravel()[len(colunas):]:
+    ax.set_visible(False)
+plt.tight_layout()
+plt.show()
+
+# --- 2.2.2 Manter ou limitar os outliers? Um teste de sensibilidade ---
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+
+X_sens = wine_num.drop(columns="quality")
+y_sens = wine_num["quality"]
+
+# Versão com os outliers limitados aos limites do IQR
+q1 = X_sens.quantile(0.25)
+q3 = X_sens.quantile(0.75)
+iqr = q3 - q1
+X_limitado = X_sens.clip(lower=q1 - 1.5 * iqr, upper=q3 + 1.5 * iqr, axis=1)
+
+kf_sens = KFold(n_splits=5, shuffle=True, random_state=42)
+modelos_sens = {
+    "Regressão Linear": Pipeline([("scaler", StandardScaler()), ("modelo", LinearRegression())]),
+    "Random Forest": Pipeline([("scaler", StandardScaler()),
+                               ("modelo", RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1))]),
+}
+
+linhas = []
+for nome, modelo in modelos_sens.items():
+    rmse_original = -cross_val_score(modelo, X_sens, y_sens, cv=kf_sens,
+                                     scoring="neg_root_mean_squared_error").mean()
+    rmse_limitado = -cross_val_score(modelo, X_limitado, y_sens, cv=kf_sens,
+                                     scoring="neg_root_mean_squared_error").mean()
+    linhas.append({"modelo": nome,
+                   "RMSE com outliers": rmse_original,
+                   "RMSE outliers limitados": rmse_limitado,
+                   "diferença": rmse_limitado - rmse_original})
+print("Teste de sensibilidade aos outliers (validação cruzada, 5 partes):")
+print(pd.DataFrame(linhas).round(4).to_string(index=False))
+
 from sklearn.preprocessing import OrdinalEncoder
 
 ordinal_encoder = OrdinalEncoder()

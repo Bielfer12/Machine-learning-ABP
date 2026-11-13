@@ -1,4 +1,4 @@
-# Parte 1 — Regressão (versão do Roberto)
+# Parte 1 — Regressão
 
 Esta pasta é uma versão separada da regressão, feita a partir da pasta `Parte 1` do repositório (EDA, pré-processamento e modelagem), sem alterar os arquivos que já existiam lá. Aqui foram acrescentados mais gráficos de EDA, a análise de outliers, as métricas, o ajuste de hiperparâmetros e a discussão.
 
